@@ -258,6 +258,21 @@ message SandboxSpec {
   string gpu_device = 10;
 }
 
+// A host path mounted into the sandbox at a given container path.
+//
+// Supported by the Docker compute driver. The host path is bind-mounted
+// into the sandbox container. Use `FilesystemPolicy.include_volume_mounts`
+// to automatically add mounted container paths to Landlock allowlists, or
+// list them explicitly in `FilesystemPolicy.read_only` / `read_write`.
+message VolumeMount {
+  // Absolute path on the host to bind-mount (e.g. "/srv/data").
+  string host_path = 1;
+  // Absolute path inside the sandbox container where the host path is mounted.
+  string container_path = 2;
+  // When true, the mount is read-only inside the sandbox; otherwise read-write.
+  bool read_only = 3;
+}
+
 // Public sandbox template mapped onto compute-driver template inputs.
 message SandboxTemplate {
   // Fully-qualified OCI image reference used to boot the sandbox.
@@ -282,6 +297,9 @@ message SandboxTemplate {
   // available (beta through 1.35, GA in 1.36+) and a supporting runtime.
   // When unset, the cluster-wide default is used.
   optional bool user_namespaces = 10;
+  // Host volumes to bind-mount into the sandbox (Docker driver only).
+  // Requires the `sandbox:mount` scope.
+  repeated VolumeMount volume_mounts = 11;
 }
 
 // User-facing sandbox status derived by the gateway from compute-driver observations.

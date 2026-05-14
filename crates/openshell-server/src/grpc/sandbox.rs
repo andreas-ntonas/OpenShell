@@ -10,9 +10,12 @@
 #![allow(clippy::cast_possible_wrap)] // Intentional u32->i32 conversions for proto compat
 
 use crate::ServerState;
+use crate::auth::authz::SCOPE_SANDBOX_MOUNT;
+use crate::auth::identity::Identity;
 use crate::persistence::{ObjectType, generate_name};
 use futures::future;
 use openshell_core::ObjectId;
+use openshell_core::VERSION;
 use openshell_core::proto::{
     AttachSandboxProviderRequest, AttachSandboxProviderResponse, CreateSandboxRequest,
     CreateSshSessionRequest, CreateSshSessionResponse, DeleteSandboxRequest, DeleteSandboxResponse,
@@ -24,6 +27,9 @@ use openshell_core::proto::{
     TcpRelayTarget, WatchSandboxRequest, relay_open, tcp_forward_init,
 };
 use openshell_core::proto::{Sandbox, SandboxPhase, SandboxTemplate, SshSession};
+use openshell_ocsf::{
+    ConfigStateChangeBuilder, OcsfEvent, SandboxContext, SeverityId, StateId, StatusId,
+};
 use prost::Message;
 use std::net::IpAddr;
 use std::pin::Pin;
@@ -55,6 +61,22 @@ pub(super) async fn handle_create_sandbox(
     request: Request<CreateSandboxRequest>,
 ) -> Result<Response<SandboxResponse>, Status> {
     use crate::persistence::current_time_ms;
+
+    // Check sandbox:mount scope if the request includes volume mounts.
+    // This is a payload-level check because volume mounts are an optional
+    // feature of CreateSandbox, not a separate RPC.
+    let has_volume_mounts = request
+        .get_ref()
+        .spec
+        .as_ref()
+        .and_then(|s| s.template.as_ref())
+        .is_some_and(|t| !t.volume_mounts.is_empty());
+    if has_volume_mounts
+        && let (Some(authz), Some(identity)) =
+            (state.authz.as_ref(), request.extensions().get::<Identity>())
+    {
+        authz.check_scope_explicit(identity, SCOPE_SANDBOX_MOUNT)?;
+    }
 
     let request = request.into_inner();
     let spec = request
@@ -135,6 +157,43 @@ pub(super) async fn handle_create_sandbox(
         sandbox_name = %name,
         "CreateSandbox request completed successfully"
     );
+
+    // Emit an OCSF ConfigStateChange event for each declared volume mount.
+    // These events provide an audit trail of which host paths were mounted.
+    let mounts = sandbox
+        .spec
+        .as_ref()
+        .and_then(|s| s.template.as_ref())
+        .map(|t| t.volume_mounts.as_slice())
+        .unwrap_or_default();
+    if !mounts.is_empty() {
+        let ocsf_ctx = SandboxContext {
+            sandbox_id: id.clone(),
+            sandbox_name: name.clone(),
+            container_image: "openshell/gateway".to_string(),
+            hostname: "openshell-gateway".to_string(),
+            product_version: VERSION.to_string(),
+            proxy_ip: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            proxy_port: 0,
+        };
+        for mount in mounts {
+            let access = if mount.read_only { "ro" } else { "rw" };
+            let event: OcsfEvent = ConfigStateChangeBuilder::new(&ocsf_ctx)
+                .state(StateId::Other, "volume_mount_declared")
+                .severity(SeverityId::Informational)
+                .status(StatusId::Success)
+                .message(format!(
+                    "volume mount declared: {}:{} ({})",
+                    mount.host_path, mount.container_path, access
+                ))
+                .unmapped("host_path", mount.host_path.clone())
+                .unmapped("container_path", mount.container_path.clone())
+                .unmapped("read_only", mount.read_only.to_string())
+                .build();
+            openshell_ocsf::ocsf_emit!(event);
+        }
+    }
+
     Ok(Response::new(SandboxResponse {
         sandbox: Some(sandbox),
     }))
@@ -1671,6 +1730,7 @@ mod tests {
             SandboxWatchBus::new(),
             TracingLogBus::new(),
             Arc::new(SupervisorSessionRegistry::new()),
+            None,
             None,
         ))
     }

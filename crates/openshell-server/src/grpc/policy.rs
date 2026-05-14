@@ -476,6 +476,33 @@ pub(super) async fn handle_get_sandbox_config(
         }
     }
 
+    // Expand `include_volume_mounts`: if the policy requests automatic Landlock
+    // allowance for mounted paths, inject the sandbox's volume mount container
+    // paths into the filesystem policy before returning to the supervisor.
+    // The stored policy is NOT mutated — this expansion is ephemeral.
+    if let Some(ref mut p) = policy
+        && p.filesystem
+            .as_ref()
+            .is_some_and(|f| f.include_volume_mounts)
+    {
+        let mounts = sandbox
+            .spec
+            .as_ref()
+            .and_then(|s| s.template.as_ref())
+            .map(|t| t.volume_mounts.as_slice())
+            .unwrap_or_default();
+        if !mounts.is_empty() {
+            let fs = p.filesystem.get_or_insert_with(Default::default);
+            for mount in mounts {
+                if mount.read_only {
+                    fs.read_only.push(mount.container_path.clone());
+                } else {
+                    fs.read_write.push(mount.container_path.clone());
+                }
+            }
+        }
+    }
+
     let settings = merge_effective_settings(&global_settings, &sandbox_settings)?;
     let config_revision = compute_config_revision(policy.as_ref(), &settings, policy_source);
     let provider_env_revision =
@@ -3879,6 +3906,7 @@ mod tests {
             version: 1,
             filesystem: Some(FilesystemPolicy {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec!["/usr".into()],
                 read_write: vec!["/tmp".into()],
             }),
@@ -3928,6 +3956,7 @@ mod tests {
             SandboxWatchBus::new(),
             TracingLogBus::new(),
             Arc::new(SupervisorSessionRegistry::new()),
+            None,
             None,
         ))
     }

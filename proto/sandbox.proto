@@ -35,6 +35,11 @@ message FilesystemPolicy {
   repeated string read_only = 2;
   // Read-write directory allow list.
   repeated string read_write = 3;
+  // When true, the gateway automatically adds mounted volume container paths
+  // to `read_only` or `read_write` (matching each mount's read_only flag)
+  // when serving sandbox config to the supervisor. When false, mounted paths
+  // must be listed explicitly in `read_only` or `read_write`.
+  bool include_volume_mounts = 4;
 }
 
 // Landlock policy configuration.

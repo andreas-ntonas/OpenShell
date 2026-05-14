@@ -1564,6 +1564,155 @@ async fn finalize_sandbox_create_session(
     session_result
 }
 
+// ---------------------------------------------------------------------------
+// Volume mount helpers
+// ---------------------------------------------------------------------------
+
+/// Top-level system paths that give trivial container escape when combined
+/// with the `SYS_ADMIN` capability every sandbox already carries.
+const DANGEROUS_HOST_PREFIXES: &[&str] = &[
+    "/proc",
+    "/sys",
+    "/dev",
+    "/etc",
+    "/run",
+    "/var/run",
+    "/var/lib/docker",
+    "/root",
+    "/boot",
+    "/lib/modules",
+    "/usr/lib/modules",
+];
+
+/// Credential/key directory names that are dangerous wherever they appear
+/// in a path (e.g. `/home/alice/.ssh`, `/srv/project/.aws`).
+const DANGEROUS_PATH_COMPONENTS: &[&str] = &[
+    ".ssh", ".aws", ".gcp", ".azure", ".kube", ".docker", ".gnupg", ".gpg", ".netrc", ".npmrc",
+    ".pypirc",
+];
+
+/// Returns a human-readable reason if `host_path` is considered dangerous,
+/// or `None` if the path appears safe.
+///
+/// Three checks are applied in order:
+/// 1. Prefix match against top-level system directories.
+/// 2. Shallow `/home` match — `/home` itself or exactly `/home/<user>`.
+/// 3. Path-component match for known credential directories.
+fn dangerous_mount_reason(host_path: &str) -> Option<String> {
+    // 1. Top-level system directory prefix check.
+    for prefix in DANGEROUS_HOST_PREFIXES {
+        if host_path == *prefix || host_path.starts_with(&format!("{prefix}/")) {
+            return Some(format!(
+                "'{host_path}' is a sensitive system path (matches '{prefix}')"
+            ));
+        }
+    }
+
+    // 2. Shallow /home check — warn for /home or /home/<user> but not deeper.
+    if host_path == "/home" {
+        return Some("'/home' mounts the entire users home directory tree".to_string());
+    }
+    if let Some(rest) = host_path.strip_prefix("/home/")
+        && !rest.is_empty()
+        && !rest.contains('/')
+    {
+        return Some(format!(
+            "'/home/{rest}' mounts an entire user home directory, which may contain SSH keys, credentials, and tokens"
+        ));
+    }
+
+    // 3. Path component check for known credential directories.
+    for component in host_path.split('/') {
+        if DANGEROUS_PATH_COMPONENTS.contains(&component) {
+            return Some(format!(
+                "'{host_path}' contains '{component}', which typically holds sensitive credentials or keys"
+            ));
+        }
+    }
+
+    None
+}
+
+/// Parse a list of `HOST:CONTAINER[:ro]` volume mount strings into
+/// `VolumeMount` proto messages.
+pub fn parse_volume_mounts(volumes: &[String]) -> Result<Vec<openshell_core::proto::VolumeMount>> {
+    let mut mounts = Vec::with_capacity(volumes.len());
+    for raw in volumes {
+        // Split on ':' — expect 2 or 3 parts.
+        let parts: Vec<&str> = raw.splitn(3, ':').collect();
+        let (host_path, container_path, read_only) = match parts.as_slice() {
+            [h, c] => (*h, *c, false),
+            [h, c, flag] if flag.eq_ignore_ascii_case("ro") => (*h, *c, true),
+            [h, c, flag] if flag.eq_ignore_ascii_case("rw") => (*h, *c, false),
+            _ => {
+                return Err(miette!(
+                    "invalid --volume '{}': expected HOST:CONTAINER[:ro|:rw]",
+                    raw
+                ));
+            }
+        };
+        if host_path.is_empty() || container_path.is_empty() {
+            return Err(miette!(
+                "invalid --volume '{}': host_path and container_path must not be empty",
+                raw
+            ));
+        }
+        mounts.push(openshell_core::proto::VolumeMount {
+            host_path: host_path.to_string(),
+            container_path: container_path.to_string(),
+            read_only,
+        });
+    }
+    Ok(mounts)
+}
+
+/// Check parsed volume mounts for dangerous host paths and either prompt the
+/// user interactively or error (when `no_warnings` is set / no TTY).
+pub fn check_dangerous_mounts(
+    mounts: &[openshell_core::proto::VolumeMount],
+    no_warnings: bool,
+) -> Result<()> {
+    use std::io::IsTerminal;
+    let is_interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+
+    for mount in mounts {
+        let Some(reason) = dangerous_mount_reason(&mount.host_path) else {
+            continue;
+        };
+
+        if no_warnings {
+            // --no-mount-warnings supplied: proceed without prompting.
+            continue;
+        }
+
+        if !is_interactive {
+            return Err(miette!(
+                "dangerous volume mount requires confirmation: {reason}\n\
+                 Use --no-mount-warnings to mount this path non-interactively."
+            ));
+        }
+
+        // Interactive: show a warning and ask for confirmation.
+        eprintln!();
+        eprintln!("  Warning: {reason}.");
+        eprintln!("  Mounting this path gives the sandbox access to sensitive host data.");
+        eprintln!();
+        let confirmed = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("Mount '{}' into the sandbox?", mount.host_path))
+            .default(false)
+            .interact()
+            .into_diagnostic()?;
+
+        if !confirmed {
+            return Err(miette!(
+                "aborted: user declined to mount '{}'",
+                mount.host_path
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Create a sandbox with default settings.
 #[allow(clippy::too_many_arguments, clippy::implicit_hasher)] // user-facing CLI command; default hasher is fine
 pub async fn sandbox_create(
@@ -1581,6 +1730,7 @@ pub async fn sandbox_create(
     providers: &[String],
     policy: Option<&str>,
     forward: Option<openshell_core::forward::ForwardSpec>,
+    volumes: &[openshell_core::proto::VolumeMount],
     command: &[String],
     tty_override: Option<bool>,
     auto_providers_override: Option<bool>,
@@ -1641,10 +1791,11 @@ pub async fn sandbox_create(
     let policy = load_sandbox_policy(policy)?;
     let resource_limits = build_sandbox_resource_limits(cpu, memory)?;
 
-    let template = if image.is_some() || resource_limits.is_some() {
+    let template = if image.is_some() || resource_limits.is_some() || !volumes.is_empty() {
         Some(SandboxTemplate {
             image: image.unwrap_or_default(),
             resources: resource_limits,
+            volume_mounts: volumes.to_vec(),
             ..SandboxTemplate::default()
         })
     } else {

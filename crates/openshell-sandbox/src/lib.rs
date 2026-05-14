@@ -1668,6 +1668,7 @@ mod baseline_tests {
             read_only: vec!["/tmp".to_string()],
             read_write: vec![],
             include_workdir: false,
+            include_volume_mounts: true,
         });
         policy.network_policies.insert(
             "test".into(),

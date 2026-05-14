@@ -1191,6 +1191,7 @@ mod tests {
             version: 1,
             filesystem: Some(ProtoFs {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec!["/usr".to_string(), "/lib".to_string()],
                 read_write: vec!["/sandbox".to_string(), "/tmp".to_string()],
             }),
@@ -2447,6 +2448,7 @@ network_policies:
             version: 1,
             filesystem: Some(ProtoFs {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec![],
                 read_write: vec![],
             }),
@@ -2570,6 +2572,7 @@ network_policies:
             version: 1,
             filesystem: Some(ProtoFs {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec![],
                 read_write: vec![],
             }),
@@ -2627,6 +2630,7 @@ network_policies:
             version: 1,
             filesystem: Some(ProtoFs {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec![],
                 read_write: vec![],
             }),
@@ -2684,6 +2688,7 @@ network_policies:
             version: 1,
             filesystem: Some(ProtoFs {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec![],
                 read_write: vec![],
             }),
@@ -3576,6 +3581,7 @@ process:
             version: 1,
             filesystem: Some(ProtoFs {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec![],
                 read_write: vec![],
             }),
@@ -3806,6 +3812,7 @@ network_policies:
             version: 1,
             filesystem: Some(ProtoFs {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec![],
                 read_write: vec![],
             }),
@@ -4683,6 +4690,7 @@ network_policies:
             version: 1,
             filesystem: Some(ProtoFs {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec![],
                 read_write: vec![],
             }),
@@ -4760,6 +4768,7 @@ network_policies:
             version: 1,
             filesystem: Some(ProtoFs {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec![],
                 read_write: vec![],
             }),

@@ -95,6 +95,10 @@ const MAX_PROVIDER_TYPE_LEN: usize = 64;
 const MAX_PROVIDER_CREDENTIALS_ENTRIES: usize = 32;
 /// Maximum number of entries in the provider `config` map.
 const MAX_PROVIDER_CONFIG_ENTRIES: usize = 64;
+/// Maximum number of volume mounts per sandbox.
+const MAX_VOLUME_MOUNTS: usize = 16;
+/// Maximum byte length for a volume mount host or container path.
+const MAX_MOUNT_PATH_LEN: usize = 4096;
 
 // ---------------------------------------------------------------------------
 // Shared types (used by the policy/settings submodule)

@@ -102,6 +102,10 @@ pub struct ServerState {
 
     /// OIDC JWKS cache for JWT validation. `None` when OIDC is not configured.
     pub oidc_cache: Option<Arc<auth::oidc::JwksCache>>,
+
+    /// Authorization policy for RBAC and scope enforcement.
+    /// `None` when OIDC is not configured (no auth enforcement).
+    pub authz: Option<auth::authz::AuthzPolicy>,
 }
 
 fn is_benign_tls_handshake_failure(error: &std::io::Error) -> bool {
@@ -133,6 +137,7 @@ impl ServerState {
         tracing_log_bus: TracingLogBus,
         supervisor_sessions: Arc<supervisor_session::SupervisorSessionRegistry>,
         oidc_cache: Option<Arc<auth::oidc::JwksCache>>,
+        authz: Option<auth::authz::AuthzPolicy>,
     ) -> Self {
         Self {
             config,
@@ -146,6 +151,7 @@ impl ServerState {
             settings_mutex: tokio::sync::Mutex::new(()),
             supervisor_sessions,
             oidc_cache,
+            authz,
         }
     }
 }
@@ -187,6 +193,12 @@ pub async fn run_server(
         None
     };
 
+    let authz = config.oidc.as_ref().map(|oidc| auth::authz::AuthzPolicy {
+        admin_role: oidc.admin_role.clone(),
+        user_role: oidc.user_role.clone(),
+        scopes_enabled: !oidc.scopes_claim.is_empty(),
+    });
+
     let sandbox_index = SandboxIndex::new();
     let sandbox_watch_bus = SandboxWatchBus::new();
     let supervisor_sessions = Arc::new(supervisor_session::SupervisorSessionRegistry::new());
@@ -210,6 +222,7 @@ pub async fn run_server(
         tracing_log_bus,
         supervisor_sessions,
         oidc_cache,
+        authz,
     ));
 
     // Resume sandboxes that were stopped during the previous gateway

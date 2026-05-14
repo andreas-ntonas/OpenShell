@@ -44,6 +44,29 @@ OpenShell uses overlapping controls rather than a single sandbox primitive:
 The supervisor may enrich baseline filesystem allowances for runtime-required
 paths, such as proxy support files or GPU device paths when a GPU is present.
 
+## Volume Mounts
+
+Host directories can be mounted into a sandbox at creation time using
+`volume_mounts` on the `SandboxTemplate`. Each mount specifies a `host_path`,
+a `container_path`, and a `read_only` flag.
+
+- The Docker driver binds each mount with `:ro,Z` or `:rw,Z`. The `:Z` label
+  applies a private SELinux context so each sandbox gets its own label.
+- The gateway validates mounts before forwarding to the compute driver: paths
+  must be absolute, non-empty, free of null bytes, within the 4096-byte limit,
+  and there must be no duplicate `container_path` entries. A maximum of 16
+  mounts per sandbox is enforced.
+- When `include_volume_mounts` is set on `FilesystemPolicy`, the gateway
+  expands the Landlock allowlist from the sandbox's volume mounts at
+  `GetSandboxConfig` time. Container paths for read-only mounts are added to the
+  read allowlist; read-write mounts go to the read-write allowlist. This
+  expansion is dynamic — the stored policy is not mutated.
+- Creating a sandbox with non-empty `volume_mounts` requires the `sandbox:mount`
+  scope. The CLI warns the user and prompts before submitting mounts of sensitive
+  host paths (e.g. `/etc`, `/root`, `.ssh`, `.aws`). Non-interactive callers
+  must pass `--no-mount-warnings` to skip prompts; the flag is rejected if no
+  dangerous paths are present.
+
 ## Network and Inference
 
 All ordinary agent egress is routed through the sandbox proxy. The proxy

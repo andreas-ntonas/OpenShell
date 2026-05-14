@@ -111,6 +111,13 @@ const SCOPED_METHODS: &[(&str, &str)] = &[
 
 const SCOPE_ALL: &str = "openshell:all";
 
+/// Scope required to bind-mount host paths into a sandbox.
+///
+/// This is checked in-handler (not at the method level) because it applies
+/// only to `CreateSandbox` requests that include `volume_mounts`, not to
+/// all `CreateSandbox` calls.
+pub const SCOPE_SANDBOX_MOUNT: &str = "sandbox:mount";
+
 /// Authorization policy configuration.
 ///
 /// Supports two modes:
@@ -190,6 +197,39 @@ impl AuthzPolicy {
         }
 
         Ok(())
+    }
+
+    /// Check whether the identity holds a specific scope, independent of
+    /// the method-to-scope mapping in `SCOPED_METHODS`.
+    ///
+    /// Returns `Ok(())` when scopes are disabled (no-op), when the identity
+    /// carries `openshell:all`, or when it holds `required_scope`.
+    /// Returns `Err(PERMISSION_DENIED)` otherwise.
+    #[allow(clippy::result_large_err)]
+    pub fn check_scope_explicit(
+        &self,
+        identity: &Identity,
+        required_scope: &str,
+    ) -> Result<(), Status> {
+        if !self.scopes_enabled {
+            return Ok(());
+        }
+        if identity
+            .scopes
+            .iter()
+            .any(|s| s == SCOPE_ALL || s == required_scope)
+        {
+            return Ok(());
+        }
+        debug!(
+            sub = %identity.subject,
+            required_scope = required_scope,
+            user_scopes = ?identity.scopes,
+            "authorization denied: missing scope"
+        );
+        Err(Status::permission_denied(format!(
+            "scope '{required_scope}' required"
+        )))
     }
 
     #[allow(clippy::result_large_err, clippy::unused_self)]

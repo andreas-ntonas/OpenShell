@@ -92,6 +92,17 @@ message DriverSandboxSpec {
   string gpu_device = 10;
 }
 
+// A host path bind-mounted into the sandbox container.
+// Mirrors `openshell.v1.VolumeMount` for internal driver use.
+message DriverVolumeMount {
+  // Absolute path on the host to bind-mount.
+  string host_path = 1;
+  // Absolute path inside the sandbox container.
+  string container_path = 2;
+  // When true, the mount is read-only inside the sandbox.
+  bool read_only = 3;
+}
+
 // Driver-owned runtime template consumed by the compute platform.
 //
 // This message describes the sandbox workload in backend-neutral terms.
@@ -115,6 +126,8 @@ message DriverSandboxTemplate {
   // For the Kubernetes driver this carries fields such as runtimeClassName,
   // annotations, and volumeClaimTemplates.
   google.protobuf.Struct platform_config = 11;
+  // Host volumes to bind-mount into the sandbox (Docker driver only).
+  repeated DriverVolumeMount volume_mounts = 12;
 }
 
 // Typed compute-resource requirements.

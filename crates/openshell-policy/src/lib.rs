@@ -48,11 +48,17 @@ struct PolicyFile {
     network_policies: BTreeMap<String, NetworkPolicyRuleDef>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FilesystemDef {
     #[serde(default)]
     include_workdir: bool,
+    #[serde(default = "default_true")]
+    include_volume_mounts: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     read_only: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -364,6 +370,7 @@ fn to_proto(raw: PolicyFile) -> SandboxPolicy {
         version: raw.version,
         filesystem: raw.filesystem_policy.map(|fs| FilesystemPolicy {
             include_workdir: fs.include_workdir,
+            include_volume_mounts: fs.include_volume_mounts,
             read_only: fs.read_only,
             read_write: fs.read_write,
         }),
@@ -385,6 +392,7 @@ fn to_proto(raw: PolicyFile) -> SandboxPolicy {
 fn from_proto(policy: &SandboxPolicy) -> PolicyFile {
     let filesystem_policy = policy.filesystem.as_ref().map(|fs| FilesystemDef {
         include_workdir: fs.include_workdir,
+        include_volume_mounts: fs.include_volume_mounts,
         read_only: fs.read_only.clone(),
         read_write: fs.read_write.clone(),
     });
@@ -608,6 +616,7 @@ pub fn restrictive_default_policy() -> SandboxPolicy {
         version: 1,
         filesystem: Some(FilesystemPolicy {
             include_workdir: true,
+            include_volume_mounts: true,
             read_only: vec![
                 "/usr".into(),
                 "/lib".into(),
@@ -1159,6 +1168,7 @@ network_policies:
         let mut policy = restrictive_default_policy();
         policy.filesystem = Some(FilesystemPolicy {
             include_workdir: true,
+            include_volume_mounts: true,
             read_only: vec!["/usr/../etc/shadow".into()],
             read_write: vec!["/tmp".into()],
         });
@@ -1175,6 +1185,7 @@ network_policies:
         let mut policy = restrictive_default_policy();
         policy.filesystem = Some(FilesystemPolicy {
             include_workdir: true,
+            include_volume_mounts: true,
             read_only: vec!["usr/lib".into()],
             read_write: vec!["/tmp".into()],
         });
@@ -1191,6 +1202,7 @@ network_policies:
         let mut policy = restrictive_default_policy();
         policy.filesystem = Some(FilesystemPolicy {
             include_workdir: true,
+            include_volume_mounts: true,
             read_only: vec!["/usr".into()],
             read_write: vec!["/".into()],
         });
@@ -1237,6 +1249,7 @@ network_policies:
         let many_paths: Vec<String> = (0..300).map(|i| format!("/path/{i}")).collect();
         policy.filesystem = Some(FilesystemPolicy {
             include_workdir: true,
+            include_volume_mounts: true,
             read_only: many_paths,
             read_write: vec!["/tmp".into()],
         });
@@ -1254,6 +1267,7 @@ network_policies:
         let long_path = format!("/{}", "a".repeat(5000));
         policy.filesystem = Some(FilesystemPolicy {
             include_workdir: true,
+            include_volume_mounts: true,
             read_only: vec![long_path],
             read_write: vec!["/tmp".into()],
         });

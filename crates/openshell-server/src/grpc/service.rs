@@ -267,6 +267,7 @@ mod tests {
             crate::tracing_bus::TracingLogBus::new(),
             Arc::new(crate::supervisor_session::SupervisorSessionRegistry::new()),
             None,
+            None,
         ))
     }
 

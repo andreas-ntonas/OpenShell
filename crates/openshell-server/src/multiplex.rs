@@ -371,6 +371,11 @@ where
                 return Ok(Response::from_parts(parts, body));
             }
 
+            // Make the authenticated identity available to gRPC handlers via
+            // request extensions so they can perform payload-level scope checks
+            // (e.g. `sandbox:mount` when volume_mounts are present).
+            req.extensions_mut().insert(identity);
+
             inner.ready().await?.call(req).await
         })
     }

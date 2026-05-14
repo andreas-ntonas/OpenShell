@@ -18,8 +18,8 @@ use futures::{Stream, StreamExt};
 use openshell_core::proto::compute::v1::{
     CreateSandboxRequest, DeleteSandboxRequest, DriverCondition, DriverPlatformEvent,
     DriverResourceRequirements, DriverSandbox, DriverSandboxSpec, DriverSandboxStatus,
-    DriverSandboxTemplate, GetCapabilitiesRequest, GetSandboxRequest, ListSandboxesRequest,
-    ValidateSandboxCreateRequest, WatchSandboxesEvent, WatchSandboxesRequest,
+    DriverSandboxTemplate, DriverVolumeMount, GetCapabilitiesRequest, GetSandboxRequest,
+    ListSandboxesRequest, ValidateSandboxCreateRequest, WatchSandboxesEvent, WatchSandboxesRequest,
     compute_driver_client::ComputeDriverClient, compute_driver_server::ComputeDriver,
     watch_sandboxes_event,
 };
@@ -1142,6 +1142,15 @@ fn driver_sandbox_template_from_public(template: &SandboxTemplate) -> DriverSand
         environment: template.environment.clone(),
         resources: extract_typed_resources(&template.resources),
         platform_config: build_platform_config(template),
+        volume_mounts: template
+            .volume_mounts
+            .iter()
+            .map(|m| DriverVolumeMount {
+                host_path: m.host_path.clone(),
+                container_path: m.container_path.clone(),
+                read_only: m.read_only,
+            })
+            .collect(),
     }
 }
 

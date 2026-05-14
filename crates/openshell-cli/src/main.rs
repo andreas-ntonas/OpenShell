@@ -6,7 +6,7 @@
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::engine::ArgValueCompleter;
 use clap_complete::env::CompleteEnv;
-use miette::Result;
+use miette::{Result, WrapErr};
 use owo_colors::OwoColorize;
 use std::collections::HashMap;
 use std::io::Write;
@@ -1030,6 +1030,7 @@ enum DoctorCommands {
 }
 
 #[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)] // Create carries clap Vec fields; boxing is impractical
 enum SandboxCommands {
     /// Create a sandbox.
     #[command(help_template = LEAF_HELP_TEMPLATE, next_help_heading = "FLAGS")]
@@ -1137,6 +1138,24 @@ enum SandboxCommands {
         /// Attach labels to the sandbox (key=value format, repeatable).
         #[arg(long = "label")]
         labels: Vec<String>,
+
+        /// Bind-mount a host path into the sandbox (Docker driver only).
+        ///
+        /// Format: `<HOST_PATH>:<CONTAINER_PATH>[:ro]`.
+        /// Use `:ro` suffix to mount read-only.
+        /// Requires the `sandbox:mount` scope.
+        /// Paths matching known sensitive locations (e.g. /etc, .ssh) trigger
+        /// an interactive warning prompt. Use `--no-mount-warnings` to skip
+        /// prompts in non-interactive mode.
+        #[arg(long = "volume", value_hint = ValueHint::AnyPath)]
+        volumes: Vec<String>,
+
+        /// Skip dangerous-path confirmation prompts for `--volume`.
+        ///
+        /// Use in non-interactive environments (CI, scripts) when mounting
+        /// paths that would otherwise trigger a warning prompt.
+        #[arg(long, requires = "volumes")]
+        no_mount_warnings: bool,
 
         /// Command to run after "--" (defaults to an interactive shell).
         #[arg(last = true, allow_hyphen_values = true)]
@@ -2383,6 +2402,8 @@ async fn main() -> Result<()> {
                     auto_providers,
                     no_auto_providers,
                     labels,
+                    volumes,
+                    no_mount_warnings,
                     command,
                 } => {
                     // Resolve --tty / --no-tty into an Option<bool> override.
@@ -2428,6 +2449,11 @@ async fn main() -> Result<()> {
                         .transpose()?;
                     let keep = keep || !no_keep || editor.is_some() || forward.is_some();
 
+                    // Parse --volume flags and run dangerous-path checks.
+                    let parsed_volumes =
+                        run::parse_volume_mounts(&volumes).wrap_err("invalid --volume flag")?;
+                    run::check_dangerous_mounts(&parsed_volumes, no_mount_warnings)?;
+
                     let ctx = resolve_gateway(&cli.gateway, &cli.gateway_endpoint)?;
                     let endpoint = &ctx.endpoint;
                     let mut tls = tls.with_gateway_name(&ctx.name);
@@ -2447,6 +2473,7 @@ async fn main() -> Result<()> {
                         &providers,
                         policy.as_deref(),
                         forward,
+                        &parsed_volumes,
                         &command,
                         tty_override,
                         auto_providers_override,

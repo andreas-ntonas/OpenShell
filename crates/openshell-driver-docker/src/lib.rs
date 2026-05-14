@@ -22,7 +22,7 @@ use openshell_core::config::{DEFAULT_DOCKER_NETWORK_NAME, DEFAULT_STOP_TIMEOUT_S
 use openshell_core::gpu::cdi_gpu_device_ids;
 use openshell_core::proto::compute::v1::{
     CreateSandboxRequest, CreateSandboxResponse, DeleteSandboxRequest, DeleteSandboxResponse,
-    DriverCondition, DriverSandbox, DriverSandboxStatus, DriverSandboxTemplate,
+    DriverCondition, DriverSandbox, DriverSandboxStatus, DriverSandboxTemplate, DriverVolumeMount,
     GetCapabilitiesRequest, GetCapabilitiesResponse, GetSandboxRequest, GetSandboxResponse,
     ListSandboxesRequest, ListSandboxesResponse, StopSandboxRequest, StopSandboxResponse,
     ValidateSandboxCreateRequest, ValidateSandboxCreateResponse, WatchSandboxesDeletedEvent,
@@ -869,20 +869,30 @@ impl ComputeDriver for DockerComputeDriver {
     }
 }
 
-fn build_binds(config: &DockerDriverRuntimeConfig) -> Vec<String> {
+fn build_binds(
+    config: &DockerDriverRuntimeConfig,
+    volume_mounts: &[DriverVolumeMount],
+) -> Vec<String> {
     let mut binds = vec![format!(
-        "{}:{}:ro,z",
+        "{}:{}:ro,Z",
         config.supervisor_bin.display(),
         SUPERVISOR_MOUNT_PATH
     )];
     if let Some(tls) = &config.guest_tls {
-        binds.push(format!("{}:{}:ro,z", tls.ca.display(), TLS_CA_MOUNT_PATH));
+        binds.push(format!("{}:{}:ro,Z", tls.ca.display(), TLS_CA_MOUNT_PATH));
         binds.push(format!(
-            "{}:{}:ro,z",
+            "{}:{}:ro,Z",
             tls.cert.display(),
             TLS_CERT_MOUNT_PATH
         ));
-        binds.push(format!("{}:{}:ro,z", tls.key.display(), TLS_KEY_MOUNT_PATH));
+        binds.push(format!("{}:{}:ro,Z", tls.key.display(), TLS_KEY_MOUNT_PATH));
+    }
+    for mount in volume_mounts {
+        let mode = if mount.read_only { "ro,Z" } else { "rw,Z" };
+        binds.push(format!(
+            "{}:{}:{mode}",
+            mount.host_path, mount.container_path
+        ));
     }
     binds
 }
@@ -1003,7 +1013,7 @@ fn build_container_create_body(
             nano_cpus: resource_limits.nano_cpus,
             memory: resource_limits.memory_bytes,
             device_requests: docker_gpu_device_requests(spec.gpu, &spec.gpu_device),
-            binds: Some(build_binds(config)),
+            binds: Some(build_binds(config, &template.volume_mounts)),
             restart_policy: Some(RestartPolicy {
                 name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
                 maximum_retry_count: None,

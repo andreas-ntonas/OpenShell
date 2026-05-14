@@ -15,10 +15,10 @@ use prost::Message;
 use tonic::Status;
 
 use super::{
-    MAX_ENVIRONMENT_ENTRIES, MAX_LOG_LEVEL_LEN, MAX_MAP_KEY_LEN, MAX_MAP_VALUE_LEN, MAX_NAME_LEN,
-    MAX_POLICY_SIZE, MAX_PROVIDER_CONFIG_ENTRIES, MAX_PROVIDER_CREDENTIALS_ENTRIES,
-    MAX_PROVIDER_TYPE_LEN, MAX_PROVIDERS, MAX_TEMPLATE_MAP_ENTRIES, MAX_TEMPLATE_STRING_LEN,
-    MAX_TEMPLATE_STRUCT_SIZE,
+    MAX_ENVIRONMENT_ENTRIES, MAX_LOG_LEVEL_LEN, MAX_MAP_KEY_LEN, MAX_MAP_VALUE_LEN,
+    MAX_MOUNT_PATH_LEN, MAX_NAME_LEN, MAX_POLICY_SIZE, MAX_PROVIDER_CONFIG_ENTRIES,
+    MAX_PROVIDER_CREDENTIALS_ENTRIES, MAX_PROVIDER_TYPE_LEN, MAX_PROVIDERS,
+    MAX_TEMPLATE_MAP_ENTRIES, MAX_TEMPLATE_STRING_LEN, MAX_TEMPLATE_STRUCT_SIZE, MAX_VOLUME_MOUNTS,
 };
 
 // ---------------------------------------------------------------------------
@@ -197,6 +197,81 @@ fn validate_sandbox_template(tmpl: &SandboxTemplate) -> Result<(), Status> {
         if size > MAX_TEMPLATE_STRUCT_SIZE {
             return Err(Status::invalid_argument(format!(
                 "template.volume_claim_templates serialized size exceeds maximum ({size} > {MAX_TEMPLATE_STRUCT_SIZE})"
+            )));
+        }
+    }
+
+    validate_volume_mounts(&tmpl.volume_mounts)?;
+
+    Ok(())
+}
+
+/// Validate the list of volume mounts for a sandbox template.
+///
+/// Checks: count limit, non-empty paths, absolute paths, no null bytes,
+/// path length, and no duplicate container paths.
+fn validate_volume_mounts(mounts: &[openshell_core::proto::VolumeMount]) -> Result<(), Status> {
+    use std::collections::HashSet;
+
+    if mounts.len() > MAX_VOLUME_MOUNTS {
+        return Err(Status::invalid_argument(format!(
+            "volume_mounts count exceeds maximum ({} > {MAX_VOLUME_MOUNTS})",
+            mounts.len()
+        )));
+    }
+
+    let mut seen_container_paths = HashSet::new();
+    for (i, mount) in mounts.iter().enumerate() {
+        let idx = i + 1;
+
+        if mount.host_path.is_empty() {
+            return Err(Status::invalid_argument(format!(
+                "volume_mounts[{idx}].host_path must not be empty"
+            )));
+        }
+        if mount.container_path.is_empty() {
+            return Err(Status::invalid_argument(format!(
+                "volume_mounts[{idx}].container_path must not be empty"
+            )));
+        }
+        if mount.host_path.contains('\0') {
+            return Err(Status::invalid_argument(format!(
+                "volume_mounts[{idx}].host_path must not contain null bytes"
+            )));
+        }
+        if mount.container_path.contains('\0') {
+            return Err(Status::invalid_argument(format!(
+                "volume_mounts[{idx}].container_path must not contain null bytes"
+            )));
+        }
+        if !mount.host_path.starts_with('/') {
+            return Err(Status::invalid_argument(format!(
+                "volume_mounts[{idx}].host_path must be an absolute path (got '{}')",
+                mount.host_path
+            )));
+        }
+        if !mount.container_path.starts_with('/') {
+            return Err(Status::invalid_argument(format!(
+                "volume_mounts[{idx}].container_path must be an absolute path (got '{}')",
+                mount.container_path
+            )));
+        }
+        if mount.host_path.len() > MAX_MOUNT_PATH_LEN {
+            return Err(Status::invalid_argument(format!(
+                "volume_mounts[{idx}].host_path exceeds maximum length ({} > {MAX_MOUNT_PATH_LEN})",
+                mount.host_path.len()
+            )));
+        }
+        if mount.container_path.len() > MAX_MOUNT_PATH_LEN {
+            return Err(Status::invalid_argument(format!(
+                "volume_mounts[{idx}].container_path exceeds maximum length ({} > {MAX_MOUNT_PATH_LEN})",
+                mount.container_path.len()
+            )));
+        }
+        if !seen_container_paths.insert(mount.container_path.as_str()) {
+            return Err(Status::invalid_argument(format!(
+                "volume_mounts: duplicate container_path '{}'",
+                mount.container_path
             )));
         }
     }
@@ -1269,6 +1344,7 @@ mod tests {
             version: 1,
             filesystem: Some(FilesystemPolicy {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec!["/usr".into()],
                 read_write: vec!["/tmp".into()],
             }),
@@ -1291,6 +1367,7 @@ mod tests {
             version: 1,
             filesystem: Some(FilesystemPolicy {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec!["/usr/../etc/shadow".into()],
                 read_write: vec!["/tmp".into()],
             }),
@@ -1309,6 +1386,7 @@ mod tests {
             version: 1,
             filesystem: Some(FilesystemPolicy {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec!["/usr".into()],
                 read_write: vec!["/".into()],
             }),
@@ -1357,6 +1435,7 @@ mod tests {
             version: 1,
             filesystem: Some(FilesystemPolicy {
                 include_workdir: true,
+                include_volume_mounts: true,
                 read_only: vec!["/usr".into()],
                 read_write: vec!["/tmp".into()],
             }),
@@ -1449,6 +1528,7 @@ mod tests {
                 read_only: vec!["/usr".into(), "/lib".into(), "/etc".into()],
                 read_write: vec!["/sandbox".into(), "/tmp".into()],
                 include_workdir: true,
+                include_volume_mounts: true,
             }),
             ..Default::default()
         };
