@@ -1351,6 +1351,7 @@ mod tests {
             process: Some(ProcessPolicy {
                 run_as_user: "root".into(),
                 run_as_group: "sandbox".into(),
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -1445,6 +1446,7 @@ mod tests {
             process: Some(ProcessPolicy {
                 run_as_user: "sandbox".into(),
                 run_as_group: "sandbox".into(),
+                ..Default::default()
             }),
             ..Default::default()
         };

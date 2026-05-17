@@ -3060,6 +3060,7 @@ filesystem_policy:
             process: ProcessPolicy {
                 run_as_user,
                 run_as_group,
+                supplemental_groups: vec![],
             },
         }
     }

@@ -419,6 +419,27 @@ impl Drop for ProcessHandle {
     }
 }
 
+/// Resolve a supplemental group entry to a numeric GID.
+///
+/// The entry is first treated as a group name and looked up via `getgrnam()`.
+/// If no such group exists in the container's `/etc/group`, the entry is
+/// parsed as a decimal GID string and used directly. This mirrors the
+/// dual-resolution logic used for `run_as_user`.
+#[cfg(unix)]
+fn resolve_supplemental_group(entry: &str) -> Result<nix::unistd::Gid> {
+    // Try name lookup first.
+    if let Some(group) = Group::from_name(entry).into_diagnostic()? {
+        return Ok(group.gid);
+    }
+    // Fall back to numeric parse.
+    let raw: u32 = entry.parse().map_err(|_| {
+        miette::miette!(
+            "Supplemental group {entry:?} is not a known group name and cannot be parsed as a GID"
+        )
+    })?;
+    Ok(nix::unistd::Gid::from_raw(raw))
+}
+
 // `effective_gid`/`effective_uid` are intentionally parallel names (same role
 // for different identifiers) and the noise from renaming would obscure intent.
 #[cfg(unix)]
@@ -488,6 +509,19 @@ pub fn drop_privileges(policy: &SandboxPolicy) -> Result<()> {
         )))]
         {
             nix::unistd::initgroups(user_cstr.as_c_str(), group.gid).into_diagnostic()?;
+        }
+
+        // Merge policy-injected supplemental groups with those set by
+        // initgroups(). Must happen before setuid() while CAP_SETGID is held.
+        if !policy.process.supplemental_groups.is_empty() {
+            let mut gids = nix::unistd::getgroups().into_diagnostic()?;
+            for entry in &policy.process.supplemental_groups {
+                let gid = resolve_supplemental_group(entry)?;
+                if !gids.contains(&gid) {
+                    gids.push(gid);
+                }
+            }
+            nix::unistd::setgroups(&gids).into_diagnostic()?;
         }
     }
 
@@ -622,6 +656,7 @@ mod tests {
         let policy = policy_with_process(ProcessPolicy {
             run_as_user: None,
             run_as_group: None,
+            supplemental_groups: vec![],
         });
         if nix::unistd::geteuid().is_root() {
             // As root, drop_privileges falls back to "sandbox:sandbox".
@@ -639,6 +674,7 @@ mod tests {
         let policy = policy_with_process(ProcessPolicy {
             run_as_user: Some(String::new()),
             run_as_group: Some(String::new()),
+            supplemental_groups: vec![],
         });
         if nix::unistd::geteuid().is_root() {
             let has_sandbox = User::from_name("sandbox").ok().flatten().is_some();
@@ -662,6 +698,7 @@ mod tests {
         let policy = policy_with_process(ProcessPolicy {
             run_as_user: None,
             run_as_group: Some(current_group.name),
+            supplemental_groups: vec![],
         });
 
         assert!(drop_privileges(&policy).is_ok());
@@ -684,6 +721,7 @@ mod tests {
         let policy = policy_with_process(ProcessPolicy {
             run_as_user: Some(current_user.name),
             run_as_group: Some(current_group.name),
+            supplemental_groups: vec![],
         });
 
         assert!(drop_privileges(&policy).is_ok());
@@ -694,6 +732,7 @@ mod tests {
         let policy = policy_with_process(ProcessPolicy {
             run_as_user: Some("__nonexistent_test_user_42__".to_string()),
             run_as_group: None,
+            supplemental_groups: vec![],
         });
 
         let result = drop_privileges(&policy);
@@ -707,6 +746,7 @@ mod tests {
         let policy = policy_with_process(ProcessPolicy {
             run_as_user: None,
             run_as_group: Some("__nonexistent_test_group_42__".to_string()),
+            supplemental_groups: vec![],
         });
 
         let result = drop_privileges(&policy);
@@ -814,5 +854,53 @@ mod tests {
         let output = cmd.output().await.expect("spawn env");
         let stdout = String::from_utf8(output.stdout).expect("utf8");
         assert!(stdout.contains("ANTHROPIC_API_KEY=openshell:resolve:env:ANTHROPIC_API_KEY"));
+    }
+
+    // -------------------------------------------------------------------------
+    // resolve_supplemental_group
+    // -------------------------------------------------------------------------
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_supplemental_group_numeric_string() {
+        // A bare numeric string must resolve to that GID directly, regardless
+        // of whether a group with that GID exists in /etc/group.
+        let gid = resolve_supplemental_group("65534").expect("numeric GID should resolve");
+        assert_eq!(gid.as_raw(), 65534);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_supplemental_group_invalid_entry_errors() {
+        // A non-existent name that is also not a number must produce an error.
+        let result = resolve_supplemental_group("__nonexistent_group_xyz_99__");
+        assert!(result.is_err(), "expected error for unknown group name");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_supplemental_group_zero_is_allowed() {
+        // GID 0 resolution itself is not blocked here — filtering of GID 0 is
+        // the server's responsibility before it enters the policy.
+        let gid = resolve_supplemental_group("0").expect("GID 0 numeric parse should succeed");
+        assert_eq!(gid.as_raw(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn drop_privileges_supplemental_groups_empty_is_noop() {
+        // With an empty supplemental_groups list the code path must still
+        // complete without error (the setgroups merge is skipped entirely).
+        let policy = policy_with_process(ProcessPolicy {
+            run_as_user: None,
+            run_as_group: None,
+            supplemental_groups: vec![],
+        });
+        if nix::unistd::geteuid().is_root() {
+            let has_sandbox = User::from_name("sandbox").ok().flatten().is_some();
+            assert_eq!(drop_privileges(&policy).is_ok(), has_sandbox);
+        } else {
+            assert!(drop_privileges(&policy).is_ok());
+        }
     }
 }

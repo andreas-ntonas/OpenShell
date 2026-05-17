@@ -82,6 +82,12 @@ pub struct ProcessPolicy {
 
     /// Group name to run the sandboxed process as.
     pub run_as_group: Option<String>,
+
+    /// Supplemental groups for the sandboxed process. Each entry is either a
+    /// group name (resolved via /etc/group inside the container) or a numeric
+    /// GID string. Auto-derived entries from volume mount host path `stat()` are
+    /// always numeric strings.
+    pub supplemental_groups: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -161,6 +167,7 @@ impl From<ProtoProcessPolicy> for ProcessPolicy {
             } else {
                 Some(proto.run_as_group)
             },
+            supplemental_groups: proto.supplemental_groups,
         }
     }
 }

@@ -36,7 +36,7 @@ OpenShell uses overlapping controls rather than a single sandbox primitive:
 | Layer | Purpose |
 |---|---|
 | Filesystem policy | Landlock restricts the paths the agent can read or write. |
-| Process policy | The child process runs as a non-root user with reduced privileges. |
+| Process policy | The child process runs as a non-root user with reduced privileges. Supplemental groups can be injected to give the sandbox agent read access to host-owned directories mounted via volume mounts. |
 | Seccomp | Blocks dangerous syscalls, including raw socket paths that bypass the proxy. |
 | Network namespace | Forces ordinary agent egress through the local CONNECT proxy. |
 | Policy proxy | Evaluates destination, binary identity, TLS/L7 rules, SSRF checks, and inference interception. |
@@ -61,6 +61,13 @@ a `container_path`, and a `read_only` flag.
   `GetSandboxConfig` time. Container paths for read-only mounts are added to the
   read allowlist; read-write mounts go to the read-write allowlist. This
   expansion is dynamic — the stored policy is not mutated.
+- At the same time the Landlock allowlist is expanded, the gateway `stat()`s
+  each `host_path` and adds the owning GID (as a decimal string) to
+  `ProcessPolicy.supplemental_groups`. The supervisor merges these GIDs with the
+  result of `initgroups()` via `setgroups()` before `setuid()`, so the sandbox
+  agent can access host-owned directories without requiring world-readable
+  permissions. GID 0 is never injected. `stat()` failure is non-fatal (logged as
+  a warning and skipped). The stored policy is not mutated.
 - Creating a sandbox with non-empty `volume_mounts` requires the `sandbox:mount`
   scope. The CLI warns the user and prompts before submitting mounts of sensitive
   host paths (e.g. `/etc`, `/root`, `.ssh`, `.aws`). Non-interactive callers

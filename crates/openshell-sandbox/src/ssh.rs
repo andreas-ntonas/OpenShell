@@ -1484,6 +1484,7 @@ mod tests {
             process: ProcessPolicy {
                 run_as_user: None,
                 run_as_group: None,
+                supplemental_groups: vec![],
             },
         };
 
@@ -1512,6 +1513,7 @@ mod tests {
                     process: ProcessPolicy {
                         run_as_user: None,
                         run_as_group: None,
+                        supplemental_groups: vec![],
                     },
                 },
                 None,

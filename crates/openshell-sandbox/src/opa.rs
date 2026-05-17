@@ -665,6 +665,7 @@ fn parse_process_policy(val: &regorus::Value) -> ProcessPolicy {
     ProcessPolicy {
         run_as_user: get_str(val, "run_as_user"),
         run_as_group: get_str(val, "run_as_group"),
+        supplemental_groups: get_str_array(val, "supplemental_groups"),
     }
 }
 
@@ -1201,6 +1202,7 @@ mod tests {
             process: Some(ProtoProc {
                 run_as_user: "sandbox".to_string(),
                 run_as_group: "sandbox".to_string(),
+                ..Default::default()
             }),
             network_policies,
         }
@@ -2458,6 +2460,7 @@ network_policies:
             process: Some(ProtoProc {
                 run_as_user: "sandbox".to_string(),
                 run_as_group: "sandbox".to_string(),
+                ..Default::default()
             }),
             network_policies,
         };
@@ -2582,6 +2585,7 @@ network_policies:
             process: Some(ProtoProc {
                 run_as_user: "sandbox".to_string(),
                 run_as_group: "sandbox".to_string(),
+                ..Default::default()
             }),
             network_policies,
         };
@@ -2640,6 +2644,7 @@ network_policies:
             process: Some(ProtoProc {
                 run_as_user: "sandbox".to_string(),
                 run_as_group: "sandbox".to_string(),
+                ..Default::default()
             }),
             network_policies,
         };
@@ -2698,6 +2703,7 @@ network_policies:
             process: Some(ProtoProc {
                 run_as_user: "sandbox".to_string(),
                 run_as_group: "sandbox".to_string(),
+                ..Default::default()
             }),
             network_policies,
         };
@@ -3591,6 +3597,7 @@ process:
             process: Some(ProtoProc {
                 run_as_user: "sandbox".to_string(),
                 run_as_group: "sandbox".to_string(),
+                ..Default::default()
             }),
             network_policies,
         };
@@ -3822,6 +3829,7 @@ network_policies:
             process: Some(ProtoProc {
                 run_as_user: "sandbox".to_string(),
                 run_as_group: "sandbox".to_string(),
+                ..Default::default()
             }),
             network_policies,
         };
@@ -4700,6 +4708,7 @@ network_policies:
             process: Some(ProtoProc {
                 run_as_user: "sandbox".to_string(),
                 run_as_group: "sandbox".to_string(),
+                ..Default::default()
             }),
             network_policies,
         };
@@ -4778,6 +4787,7 @@ network_policies:
             process: Some(ProtoProc {
                 run_as_user: "sandbox".to_string(),
                 run_as_group: "sandbox".to_string(),
+                ..Default::default()
             }),
             network_policies,
         };

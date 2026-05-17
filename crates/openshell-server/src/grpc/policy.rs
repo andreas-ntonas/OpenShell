@@ -479,6 +479,9 @@ pub(super) async fn handle_get_sandbox_config(
     // Expand `include_volume_mounts`: if the policy requests automatic Landlock
     // allowance for mounted paths, inject the sandbox's volume mount container
     // paths into the filesystem policy before returning to the supervisor.
+    // Also stat each host_path and inject the owning GID into the process
+    // policy's supplemental_groups so the sandbox agent can read host-owned
+    // directories without requiring world-readable permissions.
     // The stored policy is NOT mutated — this expansion is ephemeral.
     if let Some(ref mut p) = policy
         && p.filesystem
@@ -498,6 +501,33 @@ pub(super) async fn handle_get_sandbox_config(
                     fs.read_only.push(mount.container_path.clone());
                 } else {
                     fs.read_write.push(mount.container_path.clone());
+                }
+            }
+
+            // Collect owning GIDs from host paths (skip root GID 0,
+            // deduplicate). stat() failure is non-fatal: warn and skip.
+            let process = p.process.get_or_insert_with(Default::default);
+            let mut seen_gids: std::collections::HashSet<u32> = process
+                .supplemental_groups
+                .iter()
+                .filter_map(|s| s.parse::<u32>().ok())
+                .collect();
+            for mount in mounts {
+                match std::fs::metadata(&mount.host_path) {
+                    Ok(meta) => {
+                        use std::os::unix::fs::MetadataExt;
+                        let gid = meta.gid();
+                        if gid != 0 && seen_gids.insert(gid) {
+                            process.supplemental_groups.push(gid.to_string());
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            host_path = %mount.host_path,
+                            error = %e,
+                            "volume mount stat failed; skipping GID injection for this path"
+                        );
+                    }
                 }
             }
         }
@@ -3916,6 +3946,7 @@ mod tests {
             process: Some(openshell_core::proto::ProcessPolicy {
                 run_as_user: "sandbox".into(),
                 run_as_group: "sandbox".into(),
+                ..Default::default()
             }),
             ..Default::default()
         };
@@ -3939,6 +3970,103 @@ mod tests {
         assert_eq!(policy.version, 1);
         assert!(policy.filesystem.is_some());
         assert_eq!(policy.process.unwrap().run_as_user, "sandbox");
+    }
+
+    /// Verify that `get_sandbox_config` injects the owning GID of each volume
+    /// mount's `host_path` into `process.supplemental_groups` when
+    /// `include_volume_mounts` is true.  The injected GID must be a decimal
+    /// string, must not duplicate existing entries, and must not include GID 0.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn get_sandbox_config_injects_volume_mount_gids() {
+        use openshell_core::proto::{
+            FilesystemPolicy, LandlockPolicy, SandboxPhase, SandboxSpec, SandboxTemplate,
+            VolumeMount,
+        };
+        use std::os::unix::fs::MetadataExt;
+
+        let state = test_server_state().await;
+
+        // Use a real directory that exists on the host so stat() succeeds.
+        let host_path = std::env::temp_dir().to_string_lossy().into_owned();
+        let expected_gid = std::fs::metadata(&host_path)
+            .expect("temp dir should be stat-able")
+            .gid();
+
+        let sandbox_id = "sb-gid-inject";
+        let sandbox = Sandbox {
+            metadata: Some(openshell_core::proto::datamodel::v1::ObjectMeta {
+                id: sandbox_id.to_string(),
+                name: sandbox_id.to_string(),
+                created_at_ms: 1_000_000,
+                labels: HashMap::new(),
+            }),
+            spec: Some(SandboxSpec {
+                policy: Some(ProtoSandboxPolicy {
+                    version: 1,
+                    filesystem: Some(FilesystemPolicy {
+                        include_workdir: false,
+                        include_volume_mounts: true,
+                        read_only: vec![],
+                        read_write: vec![],
+                    }),
+                    landlock: Some(LandlockPolicy {
+                        compatibility: "best_effort".into(),
+                    }),
+                    process: Some(openshell_core::proto::ProcessPolicy {
+                        run_as_user: "sandbox".into(),
+                        run_as_group: "sandbox".into(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                template: Some(SandboxTemplate {
+                    volume_mounts: vec![VolumeMount {
+                        host_path: host_path.clone(),
+                        container_path: "/mnt/data".into(),
+                        read_only: false,
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            phase: SandboxPhase::Provisioning as i32,
+            ..Default::default()
+        };
+        state.store.put_message(&sandbox).await.unwrap();
+
+        let policy = get_sandbox_policy(&state, sandbox_id).await;
+        let proc = policy.process.expect("process policy should be set");
+
+        // GID 0 is /tmp's group on some systems; if expected_gid is 0 the
+        // server skips it. Either way the vec must not contain "0" as an
+        // auto-injected entry.
+        if expected_gid == 0 {
+            assert!(
+                proc.supplemental_groups.is_empty(),
+                "GID 0 must not be injected; got {:?}",
+                proc.supplemental_groups
+            );
+        } else {
+            assert!(
+                proc.supplemental_groups.contains(&expected_gid.to_string()),
+                "expected GID {expected_gid} in supplemental_groups; got {:?}",
+                proc.supplemental_groups
+            );
+            // Must be a decimal string, not a name.
+            for entry in &proc.supplemental_groups {
+                entry
+                    .parse::<u32>()
+                    .expect("each supplemental group must be a decimal GID string");
+            }
+            // No duplicates.
+            let unique: std::collections::HashSet<_> = proc.supplemental_groups.iter().collect();
+            assert_eq!(
+                unique.len(),
+                proc.supplemental_groups.len(),
+                "no duplicates"
+            );
+        }
     }
 
     async fn test_server_state() -> Arc<ServerState> {

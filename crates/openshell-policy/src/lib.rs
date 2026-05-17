@@ -79,6 +79,8 @@ struct ProcessDef {
     run_as_user: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     run_as_group: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    supplemental_groups: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -380,6 +382,7 @@ fn to_proto(raw: PolicyFile) -> SandboxPolicy {
         process: raw.process.map(|p| ProcessPolicy {
             run_as_user: p.run_as_user,
             run_as_group: p.run_as_group,
+            supplemental_groups: p.supplemental_groups,
         }),
         network_policies,
     }
@@ -402,12 +405,14 @@ fn from_proto(policy: &SandboxPolicy) -> PolicyFile {
     });
 
     let process = policy.process.as_ref().and_then(|p| {
-        if p.run_as_user.is_empty() && p.run_as_group.is_empty() {
+        if p.run_as_user.is_empty() && p.run_as_group.is_empty() && p.supplemental_groups.is_empty()
+        {
             None
         } else {
             Some(ProcessDef {
                 run_as_user: p.run_as_user.clone(),
                 run_as_group: p.run_as_group.clone(),
+                supplemental_groups: p.supplemental_groups.clone(),
             })
         }
     });
@@ -634,6 +639,7 @@ pub fn restrictive_default_policy() -> SandboxPolicy {
         process: Some(ProcessPolicy {
             run_as_user: "sandbox".into(),
             run_as_group: "sandbox".into(),
+            supplemental_groups: vec![],
         }),
         network_policies: HashMap::new(),
     }
@@ -1085,6 +1091,7 @@ network_policies:
         policy.process = Some(ProcessPolicy {
             run_as_user: String::new(),
             run_as_group: String::new(),
+            supplemental_groups: vec![],
         });
         ensure_sandbox_process_identity(&mut policy);
         let proc = policy.process.unwrap();
@@ -1119,6 +1126,7 @@ network_policies:
         policy.process = Some(ProcessPolicy {
             run_as_user: "root".into(),
             run_as_group: "sandbox".into(),
+            supplemental_groups: vec![],
         });
         let violations = validate_sandbox_policy(&policy).unwrap_err();
         assert!(violations.iter().any(|v| matches!(
@@ -1136,6 +1144,7 @@ network_policies:
         policy.process = Some(ProcessPolicy {
             run_as_user: "0".into(),
             run_as_group: "0".into(),
+            supplemental_groups: vec![],
         });
         let violations = validate_sandbox_policy(&policy).unwrap_err();
         assert_eq!(violations.len(), 2);
@@ -1147,6 +1156,7 @@ network_policies:
         policy.process = Some(ProcessPolicy {
             run_as_user: "nobody".into(),
             run_as_group: "nogroup".into(),
+            supplemental_groups: vec![],
         });
         let violations = validate_sandbox_policy(&policy).unwrap_err();
         assert_eq!(violations.len(), 2);
@@ -1238,6 +1248,7 @@ network_policies:
         policy.process = Some(ProcessPolicy {
             run_as_user: String::new(),
             run_as_group: String::new(),
+            supplemental_groups: vec![],
         });
         let violations = validate_sandbox_policy(&policy).unwrap_err();
         assert_eq!(violations.len(), 2);
